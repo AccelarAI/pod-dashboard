@@ -6,7 +6,6 @@
 // Replace these with your Supabase project credentials
 const SUPABASE_URL = 'https://jngaimwmdntcydqefryt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_IIWDOFGb41BZC9J8XS-BAA_YiO1FQMv';
-const PASSWORD_HASH = '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8'; // Default: "password" — change this!
 
 let supabase;
 let currentMeetingId = null;
@@ -14,17 +13,12 @@ let members = [];
 let topicFilter = 'open';
 
 // --- AUTH ---
-function sha256(str) {
-  const buf = new TextEncoder().encode(str);
-  return crypto.subtle.digest('SHA-256', buf).then(h => {
-    return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
-  });
-}
+// Simple password check (no hashing needed for this use case)
+const PASSWORD = 'pod2026';
 
-async function attemptLogin() {
+function attemptLogin() {
   const pw = document.getElementById('password-input').value;
-  const hash = await sha256(pw);
-  if (hash === PASSWORD_HASH) {
+  if (pw === PASSWORD) {
     sessionStorage.setItem('pod_auth', '1');
     showDashboard();
   } else {
