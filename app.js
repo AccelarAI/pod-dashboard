@@ -292,14 +292,25 @@ async function loadAttendance() {
   if (!data || data.length === 0) {
     // Auto-create attendance records if members exist
     if (members.length && currentMeetingId) {
-      const rows = members.map(m => ({ meeting_id: currentMeetingId, member_id: m.id, present: false }));
-      await db.from('attendance').upsert(rows, { onConflict: 'meeting_id,member_id' });
-      return loadAttendance();
+      for (const m of members) {
+        await db.from('attendance').insert({ meeting_id: currentMeetingId, member_id: m.id, present: false }).select();
+      }
+      // Re-fetch after creating
+      const { data: fresh } = await db.from('attendance')
+        .select('*, members(name)').eq('meeting_id', currentMeetingId);
+      if (fresh && fresh.length > 0) {
+        renderAttendance(fresh, container);
+        return;
+      }
     }
     container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No members</p>';
     return;
   }
 
+  renderAttendance(data, container);
+}
+
+function renderAttendance(data, container) {
   const seen = new Set();
   const unique = data.filter(a => {
     if (seen.has(a.member_id)) return false;
