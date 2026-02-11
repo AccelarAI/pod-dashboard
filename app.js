@@ -4,7 +4,7 @@
 
 const SUPABASE_URL = 'https://jngaimwmdntcydqefryt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_IIWDOFGb41BZC9J8XS-BAA_YiO1FQMv';
-const PASSWORD = 'pod2026';
+const PASSWORD = 'AwesomePod2026!';
 
 let db;
 let currentMeetingId = null;
