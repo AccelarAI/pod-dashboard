@@ -120,9 +120,16 @@ async function deleteMeeting() {
 
 async function generateRecap(meetingId) {
   const { data: att } = await db.from('attendance')
-    .select('present, members(name)').eq('meeting_id', meetingId);
-  const presentNames = (att || []).filter(a => a.present).map(a => a.members?.name).filter(Boolean);
-  const absentNames = (att || []).filter(a => !a.present).map(a => a.members?.name).filter(Boolean);
+    .select('present, member_id, members(name)').eq('meeting_id', meetingId);
+  // Deduplicate by member_id
+  const seen = new Set();
+  const uniqueAtt = (att || []).filter(a => {
+    if (seen.has(a.member_id)) return false;
+    seen.add(a.member_id);
+    return true;
+  });
+  const presentNames = uniqueAtt.filter(a => a.present).map(a => a.members?.name).filter(Boolean);
+  const absentNames = uniqueAtt.filter(a => !a.present).map(a => a.members?.name).filter(Boolean);
 
   const { data: topics } = await db.from('topics')
     .select('text').eq('discussed', true).eq('meeting_id', meetingId);
