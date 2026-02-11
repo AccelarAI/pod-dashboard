@@ -239,7 +239,7 @@ async function loadTopics() {
   container.innerHTML = data.map(t => `
     <div class="topic-item">
       <div class="topic-checkbox ${t.discussed ? 'checked' : ''}"
-        onclick="toggleTopic('${t.id}', ${!t.discussed})"></div>
+        onclick="toggleTopic('${t.id}', ${!t.discussed})" title="${t.discussed ? 'Mark as open' : 'Mark as discussed'}"></div>
       <div style="flex:1">
         <div class="topic-text ${t.discussed ? 'discussed' : ''}">${esc(t.text)}</div>
         <div class="topic-meta">
@@ -290,6 +290,12 @@ async function loadAttendance() {
   const container = document.getElementById('attendance-list');
 
   if (!data || data.length === 0) {
+    // Auto-create attendance records if members exist
+    if (members.length && currentMeetingId) {
+      const rows = members.map(m => ({ meeting_id: currentMeetingId, member_id: m.id, present: false }));
+      await db.from('attendance').upsert(rows, { onConflict: 'meeting_id,member_id' });
+      return loadAttendance();
+    }
     container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No members</p>';
     return;
   }
@@ -331,7 +337,10 @@ async function loadCheckins() {
 
   container.innerHTML = data.map(c => `
     <div class="checkin-entry">
-      <h3>${esc(c.members?.name || 'Unknown')}</h3>
+      <div class="checkin-header">
+        <h3>${esc(c.members?.name || 'Unknown')}</h3>
+        <span class="delete-btn" onclick="deleteCheckin('${c.id}')" title="Delete check-in">×</span>
+      </div>
       ${c.goals ? `<div class="field"><div class="field-label">🎯 Goals</div>${esc(c.goals)}</div>` : ''}
       ${c.progress ? `<div class="field"><div class="field-label">📈 Progress</div>${esc(c.progress)}</div>` : ''}
       ${c.challenges ? `<div class="field"><div class="field-label">⚡ Challenges</div>${esc(c.challenges)}</div>` : ''}
@@ -445,6 +454,12 @@ async function submitCheckin() {
   document.getElementById('checkin-preview').classList.add('hidden');
   document.getElementById('paste-zone').textContent = '📋 Click here and paste (Ctrl+V) a check-in screenshot';
   document.getElementById('paste-zone').classList.remove('active');
+  await loadCheckins();
+}
+
+async function deleteCheckin(id) {
+  if (!confirm('Delete this check-in?')) return;
+  await db.from('checkins').delete().eq('id', id);
   await loadCheckins();
 }
 
