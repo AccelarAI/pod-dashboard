@@ -6,7 +6,6 @@
   <title>Pod Dashboard — AAA Accelerator</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -32,49 +31,56 @@
       <span class="subtitle">AAA Accelerator</span>
     </div>
     <div class="header-right">
-      <select id="meeting-selector" onchange="switchMeeting()"></select>
-      <button class="btn-small" onclick="createNewMeeting()">+ New Meeting</button>
-      <button class="btn-small btn-danger" onclick="deleteMeeting()">🗑</button>
       <button class="btn-small btn-logout" onclick="logout()">Log out</button>
     </div>
   </header>
 
-  <div class="grid">
+  <!-- GLOBAL SECTION: always visible -->
+  <div class="grid global-section">
     
-    <!-- AGENDA -->
+    <!-- AGENDA (global standing agenda) -->
     <section class="card agenda-card">
-      <div class="card-header-row">
-        <h2>📋 Agenda</h2>
-        <button class="btn-tiny" onclick="toggleDefaultAgenda()" id="agenda-mode-btn" title="Switch between meeting agenda and default template">⚙️ Template</button>
-      </div>
-      <div id="agenda-mode-label" class="mode-label">Meeting agenda</div>
+      <h2>📋 Standing Agenda</h2>
       <div id="agenda-items"></div>
       <div class="add-row">
-        <input type="text" id="new-agenda-text" placeholder="New agenda item...">
+        <input type="text" id="new-agenda-text" placeholder="New agenda item..." onkeydown="if(event.key==='Enter')addAgendaItem()">
         <input type="number" id="new-agenda-time" placeholder="min" min="1" max="60" value="5" style="width:60px">
         <button onclick="addAgendaItem()">+</button>
       </div>
     </section>
 
-    <!-- ATTENDANCE -->
-    <section class="card attendance-card">
-      <h2>👥 Attendance</h2>
-      <div id="attendance-list"></div>
-    </section>
-
-    <!-- TOPICS -->
+    <!-- TOPICS (global backlog) -->
     <section class="card topics-card">
-      <h2>💡 Topics</h2>
+      <h2>💡 Topics Backlog</h2>
       <div class="topic-filters">
         <button class="filter-btn active" data-filter="open" onclick="filterTopics('open')">Open</button>
         <button class="filter-btn" data-filter="discussed" onclick="filterTopics('discussed')">Discussed</button>
       </div>
       <div id="topics-list"></div>
       <div class="add-row">
-        <input type="text" id="new-topic-text" placeholder="New topic...">
-        <input type="text" id="new-topic-by" placeholder="Name" style="width:80px">
+        <input type="text" id="new-topic-text" placeholder="New topic..." onkeydown="if(event.key==='Enter')addTopic()">
+        <select id="new-topic-by" style="width:100px"></select>
         <button onclick="addTopic()">+</button>
       </div>
+    </section>
+  </div>
+
+  <!-- MEETING SECTION -->
+  <div class="meeting-header">
+    <h2>📅 Meeting</h2>
+    <div class="meeting-controls">
+      <select id="meeting-selector" onchange="switchMeeting()"></select>
+      <button class="btn-small" onclick="createNewMeeting()">+ New Meeting</button>
+      <button class="btn-small btn-danger" onclick="deleteMeeting()">🗑</button>
+    </div>
+  </div>
+
+  <div id="meeting-content" class="grid meeting-section">
+
+    <!-- ATTENDANCE -->
+    <section class="card attendance-card">
+      <h2>👥 Attendance</h2>
+      <div id="attendance-list"></div>
     </section>
 
     <!-- CHECK-INS -->
@@ -90,9 +96,7 @@
           <textarea id="checkin-challenges" placeholder="Challenges..." rows="2"></textarea>
           <textarea id="checkin-support" placeholder="Support needed from pod..." rows="2"></textarea>
           <div class="checkin-or">— or paste a screenshot —</div>
-          <div class="paste-zone" id="paste-zone">
-            📋 Click here and paste (Ctrl+V) a screenshot of your check-in
-          </div>
+          <div class="paste-zone" id="paste-zone">📋 Click here and paste (Ctrl+V) a check-in screenshot</div>
           <div id="ocr-status" class="hidden ocr-status">🔍 Reading screenshot...</div>
           <img id="checkin-preview" class="hidden" style="max-width:100%;border-radius:8px;margin-top:8px;">
           <button onclick="submitCheckin()">Save check-in</button>
@@ -100,15 +104,20 @@
       </details>
     </section>
 
-    <!-- PREVIOUS MEETING RECAP -->
+    <!-- RECAP -->
     <section class="card summary-card">
-      <h2>📄 Previous Meeting Recap</h2>
+      <h2>📄 Meeting Summary</h2>
       <div id="prev-recap"></div>
-      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Click to add/edit summary..."></div>
+      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Click to add summary / notes..."></div>
       <button class="btn-small save-summary" onclick="saveSummary()">Save</button>
     </section>
 
   </div>
+
+  <div id="no-meeting-msg" class="no-meeting hidden">
+    <p>No meetings yet. Create one to track attendance, check-ins and summaries.</p>
+  </div>
+
 </div>
 
 <script src="app.js"></script>

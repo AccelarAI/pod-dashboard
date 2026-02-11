@@ -10,7 +10,6 @@ let db;
 let currentMeetingId = null;
 let members = [];
 let topicFilter = 'open';
-let editingDefaultAgenda = false;
 
 // --- AUTH ---
 function attemptLogin() {
@@ -22,16 +21,10 @@ function attemptLogin() {
     document.getElementById('login-error').classList.remove('hidden');
   }
 }
-
 document.getElementById('password-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') attemptLogin();
 });
-
-function logout() {
-  sessionStorage.removeItem('pod_auth');
-  location.reload();
-}
-
+function logout() { sessionStorage.removeItem('pod_auth'); location.reload(); }
 function showDashboard() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('dashboard').classList.remove('hidden');
@@ -42,6 +35,10 @@ function showDashboard() {
 async function init() {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   await loadMembers();
+  // Global data (no meeting needed)
+  await loadAgenda();
+  await loadTopics();
+  // Meeting data
   await loadMeetings();
   setupPasteZone();
   setupRealtimeSubscriptions();
@@ -51,34 +48,42 @@ async function init() {
 async function loadMembers() {
   const { data } = await db.from('members').select('*').order('name');
   members = data || [];
-  populateCheckinMemberSelect();
-}
-
-function populateCheckinMemberSelect() {
-  const sel = document.getElementById('checkin-member');
-  sel.innerHTML = '<option value="">Choose name...</option>' +
+  // Populate all member dropdowns
+  const checkinSel = document.getElementById('checkin-member');
+  checkinSel.innerHTML = '<option value="">Choose name...</option>' +
     members.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  const topicSel = document.getElementById('new-topic-by');
+  topicSel.innerHTML = '<option value="">Name</option>' +
+    members.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
 }
 
 // --- MEETINGS ---
 async function loadMeetings() {
   const { data } = await db.from('meetings').select('*').order('date', { ascending: false });
   const sel = document.getElementById('meeting-selector');
+  const content = document.getElementById('meeting-content');
+  const noMsg = document.getElementById('no-meeting-msg');
+
   if (!data || data.length === 0) {
     sel.innerHTML = '<option>No meetings yet</option>';
     currentMeetingId = null;
+    content.classList.add('hidden');
+    noMsg.classList.remove('hidden');
     return;
   }
+
+  noMsg.classList.add('hidden');
+  content.classList.remove('hidden');
   sel.innerHTML = data.map(m =>
     `<option value="${m.id}">${formatDate(m.date)}${m.title ? ' — ' + m.title : ''}</option>`
   ).join('');
   currentMeetingId = data[0].id;
-  await loadAllForMeeting();
+  await loadMeetingData();
 }
 
 async function switchMeeting() {
   currentMeetingId = document.getElementById('meeting-selector').value;
-  await loadAllForMeeting();
+  await loadMeetingData();
 }
 
 async function createNewMeeting() {
@@ -86,13 +91,11 @@ async function createNewMeeting() {
   const dateStr = prompt('Date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
   if (!dateStr) return;
 
-  // Get previous meeting info for auto-recap
-  const { data: prevMeetings } = await db.from('meetings').select('*').order('date', { ascending: false }).limit(1);
+  // Generate recap from previous meeting
+  const { data: prevMeetings } = await db.from('meetings').select('id').order('date', { ascending: false }).limit(1);
   let autoRecap = '';
-
   if (prevMeetings && prevMeetings.length > 0) {
-    const prev = prevMeetings[0];
-    autoRecap = await generateRecap(prev.id);
+    autoRecap = await generateRecap(prevMeetings[0].id);
   }
 
   const { data } = await db.from('meetings').insert({
@@ -100,19 +103,8 @@ async function createNewMeeting() {
   }).select().single();
 
   if (data) {
-    // Create attendance for all members
     const rows = members.map(m => ({ meeting_id: data.id, member_id: m.id, present: false }));
     if (rows.length) await db.from('attendance').upsert(rows, { onConflict: 'meeting_id,member_id' });
-
-    // Copy default agenda template to this meeting
-    const { data: defaults } = await db.from('agenda_defaults').select('*').order('position');
-    if (defaults && defaults.length) {
-      const agendaRows = defaults.map((d, i) => ({
-        meeting_id: data.id, text: d.text, duration_min: d.duration_min, position: i
-      }));
-      await db.from('agenda_items').insert(agendaRows);
-    }
-
     await loadMeetings();
   }
 }
@@ -121,23 +113,20 @@ async function deleteMeeting() {
   if (!currentMeetingId) return;
   const sel = document.getElementById('meeting-selector');
   const name = sel.options[sel.selectedIndex]?.text || '';
-  if (!confirm(`Delete meeting "${name}"? This removes all its data.`)) return;
+  if (!confirm(`Delete "${name}"? This removes all its data.`)) return;
   await db.from('meetings').delete().eq('id', currentMeetingId);
   await loadMeetings();
 }
 
 async function generateRecap(meetingId) {
-  // Gather attendance
   const { data: att } = await db.from('attendance')
     .select('present, members(name)').eq('meeting_id', meetingId);
   const presentNames = (att || []).filter(a => a.present).map(a => a.members?.name).filter(Boolean);
   const absentNames = (att || []).filter(a => !a.present).map(a => a.members?.name).filter(Boolean);
 
-  // Gather discussed topics
   const { data: topics } = await db.from('topics')
     .select('text').eq('discussed', true).eq('meeting_id', meetingId);
 
-  // Gather checkins
   const { data: checkins } = await db.from('checkins')
     .select('members(name), goals, challenges').eq('meeting_id', meetingId);
 
@@ -152,72 +141,26 @@ async function generateRecap(meetingId) {
     recap += `\n**Check-in highlights:**\n`;
     checkins.forEach(c => {
       const name = c.members?.name || '?';
-      if (c.goals) recap += `• ${name} — Goals: ${c.goals.substring(0, 100)}\n`;
-      if (c.challenges) recap += `• ${name} — Challenge: ${c.challenges.substring(0, 100)}\n`;
+      if (c.goals) recap += `• ${name} — Goals: ${c.goals.substring(0, 120)}\n`;
+      if (c.challenges) recap += `• ${name} — Challenge: ${c.challenges.substring(0, 120)}\n`;
     });
   }
   return recap;
 }
 
-async function loadAllForMeeting() {
+async function loadMeetingData() {
   if (!currentMeetingId) return;
-  editingDefaultAgenda = false;
-  updateAgendaModeUI();
-  await Promise.all([
-    loadAgenda(),
-    loadAttendance(),
-    loadTopics(),
-    loadCheckins(),
-    loadRecap()
-  ]);
+  await Promise.all([loadAttendance(), loadCheckins(), loadRecap()]);
 }
 
-// --- AGENDA (per meeting, with default template) ---
-function toggleDefaultAgenda() {
-  editingDefaultAgenda = !editingDefaultAgenda;
-  updateAgendaModeUI();
-  if (editingDefaultAgenda) loadDefaultAgenda();
-  else loadAgenda();
-}
-
-function updateAgendaModeUI() {
-  const label = document.getElementById('agenda-mode-label');
-  const btn = document.getElementById('agenda-mode-btn');
-  if (editingDefaultAgenda) {
-    label.textContent = '⚙️ Editing default template (used for new meetings)';
-    label.style.color = 'var(--warning)';
-    btn.textContent = '← Back';
-  } else {
-    label.textContent = 'Meeting agenda';
-    label.style.color = 'var(--text-muted)';
-    btn.textContent = '⚙️ Template';
-  }
-}
-
-async function loadDefaultAgenda() {
+// =============================================
+// GLOBAL: AGENDA (standing agenda, not per meeting)
+// =============================================
+async function loadAgenda() {
   const { data } = await db.from('agenda_defaults').select('*').order('position');
   const container = document.getElementById('agenda-items');
   if (!data || data.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No default items yet. Add items here — they\'ll be used for every new meeting.</p>';
-    return;
-  }
-  container.innerHTML = data.map(item => `
-    <div class="agenda-item" draggable="true" data-id="${item.id}">
-      <span class="drag-handle">⠿</span>
-      <span class="time-badge">${item.duration_min} min</span>
-      <span class="text">${esc(item.text)}</span>
-      <span class="delete-btn" onclick="deleteAgendaItem('${item.id}')">×</span>
-    </div>
-  `).join('');
-}
-
-async function loadAgenda() {
-  if (editingDefaultAgenda) return loadDefaultAgenda();
-  const { data } = await db.from('agenda_items')
-    .select('*').eq('meeting_id', currentMeetingId).order('position');
-  const container = document.getElementById('agenda-items');
-  if (!data || data.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No agenda items. Add some or set up a default template.</p>';
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No agenda items yet — add your standing agenda below.</p>';
     return;
   }
   container.innerHTML = data.map(item => `
@@ -235,27 +178,17 @@ async function addAgendaItem() {
   const text = document.getElementById('new-agenda-text').value.trim();
   const dur = parseInt(document.getElementById('new-agenda-time').value) || 5;
   if (!text) return;
-
-  const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
-  const filter = editingDefaultAgenda ? {} : { meeting_id: currentMeetingId };
-
-  let query = db.from(table).select('position').order('position', { ascending: false }).limit(1);
-  if (!editingDefaultAgenda) query = query.eq('meeting_id', currentMeetingId);
-  const { data: existing } = await query;
-
+  const { data: existing } = await db.from('agenda_defaults')
+    .select('position').order('position', { ascending: false }).limit(1);
   const pos = existing && existing.length ? existing[0].position + 1 : 0;
-  const row = { text, duration_min: dur, position: pos };
-  if (!editingDefaultAgenda) row.meeting_id = currentMeetingId;
-
-  await db.from(table).insert(row);
+  await db.from('agenda_defaults').insert({ text, duration_min: dur, position: pos });
   document.getElementById('new-agenda-text').value = '';
-  editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
+  await loadAgenda();
 }
 
 async function deleteAgendaItem(id) {
-  const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
-  await db.from(table).delete().eq('id', id);
-  editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
+  await db.from('agenda_defaults').delete().eq('id', id);
+  await loadAgenda();
 }
 
 function setupAgendaDragDrop() {
@@ -272,24 +205,85 @@ function setupAgendaDragDrop() {
       const draggedId = e.dataTransfer.getData('text/plain');
       const targetId = item.dataset.id;
       if (draggedId === targetId) return;
-      const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
-      let query = db.from(table).select('id,position').order('position');
-      if (!editingDefaultAgenda) query = query.eq('meeting_id', currentMeetingId);
-      const { data: all } = await query;
+      const { data: all } = await db.from('agenda_defaults')
+        .select('id,position').order('position');
       const ids = all.map(a => a.id);
       const fromIdx = ids.indexOf(draggedId);
       const toIdx = ids.indexOf(targetId);
       ids.splice(fromIdx, 1);
       ids.splice(toIdx, 0, draggedId);
       for (let i = 0; i < ids.length; i++) {
-        await db.from(table).update({ position: i }).eq('id', ids[i]);
+        await db.from('agenda_defaults').update({ position: i }).eq('id', ids[i]);
       }
-      editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
+      await loadAgenda();
     });
   });
 }
 
-// --- ATTENDANCE ---
+// =============================================
+// GLOBAL: TOPICS (backlog with date + member)
+// =============================================
+async function loadTopics() {
+  let query = db.from('topics').select('*').order('created_at', { ascending: false });
+  if (topicFilter === 'open') query = query.eq('discussed', false);
+  else query = query.eq('discussed', true);
+
+  const { data } = await query;
+  const container = document.getElementById('topics-list');
+
+  if (!data || data.length === 0) {
+    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">${topicFilter === 'open' ? 'No open topics' : 'Nothing discussed yet'}</p>`;
+    return;
+  }
+
+  container.innerHTML = data.map(t => `
+    <div class="topic-item">
+      <div class="topic-checkbox ${t.discussed ? 'checked' : ''}"
+        onclick="toggleTopic('${t.id}', ${!t.discussed})"></div>
+      <div style="flex:1">
+        <div class="topic-text ${t.discussed ? 'discussed' : ''}">${esc(t.text)}</div>
+        <div class="topic-meta">
+          ${t.added_by ? '<span class="topic-by">' + esc(t.added_by) + '</span>' : ''}
+          <span class="topic-date">${formatShortDate(t.created_at)}</span>
+        </div>
+      </div>
+      <span class="delete-btn" onclick="deleteTopic('${t.id}')">×</span>
+    </div>
+  `).join('');
+}
+
+function filterTopics(filter) {
+  topicFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
+  loadTopics();
+}
+
+async function addTopic() {
+  const text = document.getElementById('new-topic-text').value.trim();
+  const by = document.getElementById('new-topic-by').value;
+  if (!text) return;
+  await db.from('topics').insert({ text, added_by: by, discussed: false, meeting_id: null });
+  document.getElementById('new-topic-text').value = '';
+  document.getElementById('new-topic-by').selectedIndex = 0;
+  await loadTopics();
+}
+
+async function toggleTopic(id, val) {
+  await db.from('topics').update({
+    discussed: val,
+    meeting_id: val ? currentMeetingId : null
+  }).eq('id', id);
+  await loadTopics();
+}
+
+async function deleteTopic(id) {
+  await db.from('topics').delete().eq('id', id);
+  await loadTopics();
+}
+
+// =============================================
+// PER MEETING: ATTENDANCE
+// =============================================
 async function loadAttendance() {
   const { data } = await db.from('attendance')
     .select('*, members(name)').eq('meeting_id', currentMeetingId);
@@ -311,11 +305,8 @@ async function loadAttendance() {
   container.innerHTML = unique.map(a => `
     <div class="member-row">
       <span class="member-name">${esc(a.members?.name || '?')}</span>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="attendance-stats">${a.present ? '✓' : ''}</span>
-        <button class="attendance-toggle ${a.present ? 'present' : 'absent'}"
-          onclick="toggleAttendance('${a.id}', ${!a.present})"></button>
-      </div>
+      <button class="attendance-toggle ${a.present ? 'present' : 'absent'}"
+        onclick="toggleAttendance('${a.id}', ${!a.present})"></button>
     </div>
   `).join('') + `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">${present}/${unique.length} present</div>`;
 }
@@ -325,60 +316,9 @@ async function toggleAttendance(id, val) {
   await loadAttendance();
 }
 
-// --- TOPICS ---
-async function loadTopics() {
-  let query = db.from('topics').select('*').order('created_at', { ascending: false });
-  if (topicFilter === 'open') query = query.eq('discussed', false);
-  else query = query.eq('discussed', true);
-
-  const { data } = await query;
-  const container = document.getElementById('topics-list');
-
-  if (!data || data.length === 0) {
-    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">${topicFilter === 'open' ? 'No open topics' : 'Nothing discussed yet'}</p>`;
-    return;
-  }
-
-  container.innerHTML = data.map(t => `
-    <div class="topic-item">
-      <div class="topic-checkbox ${t.discussed ? 'checked' : ''}"
-        onclick="toggleTopic('${t.id}', ${!t.discussed})"></div>
-      <div>
-        <div class="topic-text ${t.discussed ? 'discussed' : ''}">${esc(t.text)}</div>
-        <div class="topic-by">${esc(t.added_by || '')}</div>
-      </div>
-      <span class="delete-btn" onclick="deleteTopic('${t.id}')" style="margin-left:auto;">×</span>
-    </div>
-  `).join('');
-}
-
-function filterTopics(filter) {
-  topicFilter = filter;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
-  loadTopics();
-}
-
-async function addTopic() {
-  const text = document.getElementById('new-topic-text').value.trim();
-  const by = document.getElementById('new-topic-by').value.trim();
-  if (!text) return;
-  await db.from('topics').insert({ text, added_by: by, discussed: false, meeting_id: null });
-  document.getElementById('new-topic-text').value = '';
-  document.getElementById('new-topic-by').value = '';
-  await loadTopics();
-}
-
-async function toggleTopic(id, val) {
-  await db.from('topics').update({ discussed: val, meeting_id: val ? currentMeetingId : null }).eq('id', id);
-  await loadTopics();
-}
-
-async function deleteTopic(id) {
-  await db.from('topics').delete().eq('id', id);
-  await loadTopics();
-}
-
-// --- CHECK-INS ---
+// =============================================
+// PER MEETING: CHECK-INS
+// =============================================
 async function loadCheckins() {
   const { data } = await db.from('checkins')
     .select('*, members(name)').eq('meeting_id', currentMeetingId).order('created_at');
@@ -420,23 +360,19 @@ function setupPasteZone() {
           zone.textContent = '✅ Screenshot pasted!';
           zone.classList.add('active');
 
-          // OCR: extract text from screenshot
           const statusEl = document.getElementById('ocr-status');
           statusEl.classList.remove('hidden');
           statusEl.textContent = '🔍 Reading screenshot text...';
-
           try {
             const { data: { text } } = await Tesseract.recognize(pastedImageBase64, 'eng');
             statusEl.classList.add('hidden');
-
-            // Try to parse the check-in fields from OCR text
             const parsed = parseCheckinText(text);
             if (parsed.goals) document.getElementById('checkin-goals').value = parsed.goals;
             if (parsed.progress) document.getElementById('checkin-progress').value = parsed.progress;
             if (parsed.challenges) document.getElementById('checkin-challenges').value = parsed.challenges;
             if (parsed.support) document.getElementById('checkin-support').value = parsed.support;
-          } catch (err) {
-            statusEl.textContent = '⚠️ Could not read screenshot text';
+          } catch {
+            statusEl.textContent = '⚠️ Could not read text';
             setTimeout(() => statusEl.classList.add('hidden'), 3000);
           }
         };
@@ -449,11 +385,8 @@ function setupPasteZone() {
 }
 
 function parseCheckinText(text) {
-  // Try to extract the 4 check-in fields from OCR text
   const result = { goals: '', progress: '', challenges: '', support: '' };
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-
-  // Look for section headers from the check-in tool
   let currentField = null;
   const fieldMap = {
     'goals': ['goal', 'objectives', 'priorities', 'main goals'],
@@ -461,11 +394,8 @@ function parseCheckinText(text) {
     'challenges': ['challenge', 'obstacle', 'difficult', 'facing'],
     'support': ['support', 'help', 'need from', 'pod']
   };
-
   for (const line of lines) {
     const lower = line.toLowerCase();
-
-    // Check if this line is a header
     let matched = false;
     for (const [field, keywords] of Object.entries(fieldMap)) {
       if (keywords.some(k => lower.includes(k)) && lower.length < 80) {
@@ -474,26 +404,19 @@ function parseCheckinText(text) {
         break;
       }
     }
-
     if (!matched && currentField) {
-      // Skip placeholder text
       if (lower.includes('describe your') || lower.includes('share your') || lower.includes('let your pod')) continue;
       result[currentField] += (result[currentField] ? '\n' : '') + line;
     }
   }
-
-  // If no structured parsing worked, just put everything in goals
-  const hasContent = Object.values(result).some(v => v.trim());
-  if (!hasContent && lines.length > 0) {
-    result.goals = lines.join('\n');
-  }
-
+  if (!Object.values(result).some(v => v.trim()) && lines.length) result.goals = lines.join('\n');
   return result;
 }
 
 async function submitCheckin() {
   const memberId = document.getElementById('checkin-member').value;
   if (!memberId) { alert('Choose a name first'); return; }
+  if (!currentMeetingId) { alert('Create a meeting first'); return; }
 
   const goals = document.getElementById('checkin-goals').value.trim();
   const progress = document.getElementById('checkin-progress').value.trim();
@@ -512,54 +435,49 @@ async function submitCheckin() {
   }
 
   await db.from('checkins').insert({
-    meeting_id: currentMeetingId,
-    member_id: memberId,
-    goals, progress, challenges, support,
-    screenshot_url: screenshotUrl
+    meeting_id: currentMeetingId, member_id: memberId,
+    goals, progress, challenges, support, screenshot_url: screenshotUrl
   });
 
-  // Reset form
-  document.getElementById('checkin-goals').value = '';
-  document.getElementById('checkin-progress').value = '';
-  document.getElementById('checkin-challenges').value = '';
-  document.getElementById('checkin-support').value = '';
+  // Reset
+  ['checkin-goals','checkin-progress','checkin-challenges','checkin-support'].forEach(id => document.getElementById(id).value = '');
   pastedImageBase64 = null;
   document.getElementById('checkin-preview').classList.add('hidden');
-  document.getElementById('paste-zone').textContent = '📋 Click here and paste (Ctrl+V) a screenshot of your check-in';
+  document.getElementById('paste-zone').textContent = '📋 Click here and paste (Ctrl+V) a check-in screenshot';
   document.getElementById('paste-zone').classList.remove('active');
-
   await loadCheckins();
 }
 
-// --- RECAP ---
+// =============================================
+// PER MEETING: RECAP / SUMMARY
+// =============================================
 async function loadRecap() {
-  const { data: meetings } = await db.from('meetings')
-    .select('*').order('date', { ascending: false }).limit(2);
+  const { data: allMeetings } = await db.from('meetings')
+    .select('*').order('date', { ascending: false });
   const recapEl = document.getElementById('prev-recap');
   const summaryEl = document.getElementById('prev-summary');
 
-  if (meetings && meetings.length > 1) {
-    const prev = meetings[1];
-    // Show auto-generated recap
-    const recap = meetings[0].summary || '';
-    recapEl.innerHTML = recap ? formatRecap(recap) : '<p style="color:var(--text-muted);font-size:13px;">No recap available</p>';
-    // Summary is editable for current meeting
-    summaryEl.innerHTML = prev.summary || '';
-    summaryEl.dataset.meetingId = prev.id;
-  } else if (meetings && meetings.length === 1) {
-    recapEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">First meeting — no previous recap</p>';
-    summaryEl.innerHTML = meetings[0].summary || '';
-    summaryEl.dataset.meetingId = meetings[0].id;
+  if (!allMeetings || allMeetings.length === 0) return;
+
+  const currentIdx = allMeetings.findIndex(m => m.id === currentMeetingId);
+  const current = allMeetings[currentIdx];
+
+  // Show auto-recap stored in this meeting's summary
+  if (current && current.summary) {
+    recapEl.innerHTML = '<strong>Previous meeting recap:</strong><br>' + formatRecap(current.summary);
   } else {
-    recapEl.innerHTML = '';
+    recapEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No recap yet</p>';
   }
+
+  // Editable summary for THIS meeting
+  summaryEl.innerHTML = current?.summary || '';
+  summaryEl.dataset.meetingId = currentMeetingId;
 }
 
 function formatRecap(text) {
   return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/^• (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
     .replace(/\n/g, '<br>');
 }
 
@@ -576,11 +494,10 @@ async function saveSummary() {
 // --- REALTIME ---
 function setupRealtimeSubscriptions() {
   db.channel('all-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_items' }, () => { if (!editingDefaultAgenda) loadAgenda(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_defaults' }, () => { if (editingDefaultAgenda) loadDefaultAgenda(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => loadAttendance())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_defaults' }, () => loadAgenda())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => { if (currentMeetingId) loadAttendance(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'topics' }, () => loadTopics())
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => loadCheckins())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => { if (currentMeetingId) loadCheckins(); })
     .subscribe();
 }
 
@@ -590,10 +507,14 @@ function esc(str) {
   d.textContent = str;
   return d.innerHTML;
 }
-
 function formatDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+function formatShortDate(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 
 // --- AUTO LOGIN ---
