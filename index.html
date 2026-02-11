@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,9 +16,9 @@
   <div class="login-box">
     <h1>🚀 Pod Dashboard</h1>
     <p>AAA Accelerator</p>
-    <input type="password" id="password-input" placeholder="Wachtwoord" autofocus>
-    <button onclick="attemptLogin()">Inloggen</button>
-    <p id="login-error" class="error hidden">Verkeerd wachtwoord</p>
+    <input type="password" id="password-input" placeholder="Password" autofocus>
+    <button onclick="attemptLogin()">Log in</button>
+    <p id="login-error" class="error hidden">Wrong password</p>
   </div>
 </div>
 
@@ -33,20 +33,20 @@
     </div>
     <div class="header-right">
       <select id="meeting-selector" onchange="switchMeeting()"></select>
-      <button class="btn-small" onclick="createNewMeeting()">+ Nieuwe Meeting</button>
-      <button class="btn-small btn-logout" onclick="logout()">Uitloggen</button>
+      <button class="btn-small" onclick="createNewMeeting()">+ New Meeting</button>
+      <button class="btn-small btn-logout" onclick="logout()">Log out</button>
     </div>
   </header>
 
   <!-- GRID LAYOUT -->
   <div class="grid">
     
-    <!-- AGENDA -->
+    <!-- AGENDA (shared, not per meeting) -->
     <section class="card agenda-card">
       <h2>📋 Agenda</h2>
       <div id="agenda-items"></div>
       <div class="add-row">
-        <input type="text" id="new-agenda-text" placeholder="Nieuw agendapunt...">
+        <input type="text" id="new-agenda-text" placeholder="New agenda item...">
         <input type="number" id="new-agenda-time" placeholder="min" min="1" max="60" value="5" style="width:60px">
         <button onclick="addAgendaItem()">+</button>
       </div>
@@ -54,21 +54,21 @@
 
     <!-- ATTENDANCE -->
     <section class="card attendance-card">
-      <h2>👥 Aanwezigheid</h2>
+      <h2>👥 Attendance</h2>
       <div id="attendance-list"></div>
     </section>
 
     <!-- TOPICS -->
     <section class="card topics-card">
-      <h2>💡 Onderwerpen</h2>
+      <h2>💡 Topics</h2>
       <div class="topic-filters">
         <button class="filter-btn active" data-filter="open" onclick="filterTopics('open')">Open</button>
-        <button class="filter-btn" data-filter="discussed" onclick="filterTopics('discussed')">Besproken</button>
+        <button class="filter-btn" data-filter="discussed" onclick="filterTopics('discussed')">Discussed</button>
       </div>
       <div id="topics-list"></div>
       <div class="add-row">
-        <input type="text" id="new-topic-text" placeholder="Nieuw onderwerp...">
-        <input type="text" id="new-topic-by" placeholder="Naam" style="width:80px">
+        <input type="text" id="new-topic-text" placeholder="New topic...">
+        <input type="text" id="new-topic-by" placeholder="Name" style="width:80px">
         <button onclick="addTopic()">+</button>
       </div>
     </section>
@@ -78,28 +78,28 @@
       <h2>📝 Check-ins</h2>
       <div id="checkin-list"></div>
       <details class="checkin-form-toggle">
-        <summary>+ Check-in toevoegen</summary>
+        <summary>+ Add check-in</summary>
         <div class="checkin-form">
           <select id="checkin-member"></select>
-          <textarea id="checkin-goals" placeholder="Doelen deze week..." rows="2"></textarea>
-          <textarea id="checkin-progress" placeholder="Progressie sinds vorige week..." rows="2"></textarea>
-          <textarea id="checkin-challenges" placeholder="Uitdagingen..." rows="2"></textarea>
-          <textarea id="checkin-support" placeholder="Hulp nodig van pod..." rows="2"></textarea>
-          <div class="checkin-or">— of plak een screenshot —</div>
+          <textarea id="checkin-goals" placeholder="Goals for this week..." rows="2"></textarea>
+          <textarea id="checkin-progress" placeholder="Progress since last week..." rows="2"></textarea>
+          <textarea id="checkin-challenges" placeholder="Challenges..." rows="2"></textarea>
+          <textarea id="checkin-support" placeholder="Support needed from pod..." rows="2"></textarea>
+          <div class="checkin-or">— or paste a screenshot —</div>
           <div class="paste-zone" id="paste-zone">
-            📋 Klik hier en plak (Ctrl+V) een screenshot van je check-in
+            📋 Click here and paste (Ctrl+V) a screenshot of your check-in
           </div>
           <img id="checkin-preview" class="hidden" style="max-width:100%;border-radius:8px;margin-top:8px;">
-          <button onclick="submitCheckin()">Check-in opslaan</button>
+          <button onclick="submitCheckin()">Save check-in</button>
         </div>
       </details>
     </section>
 
     <!-- PREVIOUS MEETING SUMMARY -->
     <section class="card summary-card">
-      <h2>📄 Samenvatting vorige meeting</h2>
-      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Klik om samenvatting toe te voegen..."></div>
-      <button class="btn-small save-summary" onclick="saveSummary()">Opslaan</button>
+      <h2>📄 Previous Meeting Summary</h2>
+      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Click to add summary..."></div>
+      <button class="btn-small save-summary" onclick="saveSummary()">Save</button>
     </section>
 
   </div>

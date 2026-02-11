@@ -2,10 +2,9 @@
 // Pod Dashboard — AAA Accelerator
 // ============================================================
 
-// --- CONFIG ---
-// Replace these with your Supabase project credentials
 const SUPABASE_URL = 'https://jngaimwmdntcydqefryt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_IIWDOFGb41BZC9J8XS-BAA_YiO1FQMv';
+const PASSWORD = 'pod2026';
 
 let db;
 let currentMeetingId = null;
@@ -13,9 +12,6 @@ let members = [];
 let topicFilter = 'open';
 
 // --- AUTH ---
-// Simple password check (no hashing needed for this use case)
-const PASSWORD = 'pod2026';
-
 function attemptLogin() {
   const pw = document.getElementById('password-input').value;
   if (pw === PASSWORD) {
@@ -46,6 +42,8 @@ async function init() {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   await loadMembers();
   await loadMeetings();
+  await loadAgenda();
+  await loadTopics();
   setupPasteZone();
   setupRealtimeSubscriptions();
 }
@@ -59,7 +57,7 @@ async function loadMembers() {
 
 function populateCheckinMemberSelect() {
   const sel = document.getElementById('checkin-member');
-  sel.innerHTML = '<option value="">Kies naam...</option>' +
+  sel.innerHTML = '<option value="">Choose name...</option>' +
     members.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 }
 
@@ -68,52 +66,51 @@ async function loadMeetings() {
   const { data } = await db.from('meetings').select('*').order('date', { ascending: false });
   const sel = document.getElementById('meeting-selector');
   if (!data || data.length === 0) {
-    sel.innerHTML = '<option>Geen meetings</option>';
+    sel.innerHTML = '<option>No meetings yet</option>';
     return;
   }
   sel.innerHTML = data.map(m =>
     `<option value="${m.id}">${formatDate(m.date)}${m.title ? ' — ' + m.title : ''}</option>`
   ).join('');
   currentMeetingId = data[0].id;
-  await loadAllForMeeting();
+  await loadMeetingData();
 }
 
 async function switchMeeting() {
   currentMeetingId = document.getElementById('meeting-selector').value;
-  await loadAllForMeeting();
+  await loadMeetingData();
 }
 
 async function createNewMeeting() {
-  const title = prompt('Meeting titel (optioneel):') || '';
-  const dateStr = prompt('Datum (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+  const title = prompt('Meeting title (optional):') || '';
+  const dateStr = prompt('Date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
   if (!dateStr) return;
   const { data } = await db.from('meetings').insert({ date: dateStr, title, summary: '' }).select().single();
   if (data) {
-    // Auto-create attendance records for all members
-    const attendanceRows = members.map(m => ({ meeting_id: data.id, member_id: m.id, present: false }));
-    if (attendanceRows.length) await db.from('attendance').insert(attendanceRows);
+    // Create attendance records for all members (once)
+    const rows = members.map(m => ({ meeting_id: data.id, member_id: m.id, present: false }));
+    if (rows.length) await db.from('attendance').insert(rows);
     await loadMeetings();
   }
 }
 
-async function loadAllForMeeting() {
+// Load only meeting-specific data (attendance, checkins, summary)
+async function loadMeetingData() {
   if (!currentMeetingId) return;
   await Promise.all([
-    loadAgenda(),
     loadAttendance(),
-    loadTopics(),
     loadCheckins(),
     loadSummary()
   ]);
 }
 
-// --- AGENDA ---
+// --- AGENDA (shared across all meetings) ---
 async function loadAgenda() {
   const { data } = await db.from('agenda_items')
-    .select('*').eq('meeting_id', currentMeetingId).order('position');
+    .select('*').order('position');
   const container = document.getElementById('agenda-items');
   if (!data || data.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">Nog geen agendapunten</p>';
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No agenda items yet</p>';
     return;
   }
   container.innerHTML = data.map(item => `
@@ -132,9 +129,9 @@ async function addAgendaItem() {
   const dur = parseInt(document.getElementById('new-agenda-time').value) || 5;
   if (!text) return;
   const { data: existing } = await db.from('agenda_items')
-    .select('position').eq('meeting_id', currentMeetingId).order('position', { ascending: false }).limit(1);
+    .select('position').order('position', { ascending: false }).limit(1);
   const pos = existing && existing.length ? existing[0].position + 1 : 0;
-  await db.from('agenda_items').insert({ meeting_id: currentMeetingId, text, duration_min: dur, position: pos });
+  await db.from('agenda_items').insert({ text, duration_min: dur, position: pos });
   document.getElementById('new-agenda-text').value = '';
   await loadAgenda();
 }
@@ -158,9 +155,8 @@ function setupAgendaDragDrop() {
       const draggedId = e.dataTransfer.getData('text/plain');
       const targetId = item.dataset.id;
       if (draggedId === targetId) return;
-      // Swap positions
       const { data: all } = await db.from('agenda_items')
-        .select('id,position').eq('meeting_id', currentMeetingId).order('position');
+        .select('id,position').order('position');
       const ids = all.map(a => a.id);
       const fromIdx = ids.indexOf(draggedId);
       const toIdx = ids.indexOf(targetId);
@@ -181,18 +177,20 @@ async function loadAttendance() {
   const container = document.getElementById('attendance-list');
 
   if (!data || data.length === 0) {
-    // If no attendance records, create them
-    if (members.length && currentMeetingId) {
-      const rows = members.map(m => ({ meeting_id: currentMeetingId, member_id: m.id, present: false }));
-      await db.from('attendance').insert(rows);
-      return loadAttendance();
-    }
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">Geen leden</p>';
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No members</p>';
     return;
   }
 
-  const present = data.filter(d => d.present).length;
-  container.innerHTML = data.map(a => `
+  // Deduplicate: keep only one record per member (in case of duplicates)
+  const seen = new Set();
+  const unique = data.filter(a => {
+    if (seen.has(a.member_id)) return false;
+    seen.add(a.member_id);
+    return true;
+  });
+
+  const present = unique.filter(d => d.present).length;
+  container.innerHTML = unique.map(a => `
     <div class="member-row">
       <span class="member-name">${esc(a.members?.name || '?')}</span>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -201,7 +199,7 @@ async function loadAttendance() {
           onclick="toggleAttendance('${a.id}', ${!a.present})"></button>
       </div>
     </div>
-  `).join('') + `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">${present}/${data.length} aanwezig</div>`;
+  `).join('') + `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">${present}/${unique.length} present</div>`;
 }
 
 async function toggleAttendance(id, val) {
@@ -219,7 +217,7 @@ async function loadTopics() {
   const container = document.getElementById('topics-list');
 
   if (!data || data.length === 0) {
-    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">${topicFilter === 'open' ? 'Geen open onderwerpen' : 'Nog niks besproken'}</p>`;
+    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">${topicFilter === 'open' ? 'No open topics' : 'Nothing discussed yet'}</p>`;
     return;
   }
 
@@ -229,7 +227,7 @@ async function loadTopics() {
         onclick="toggleTopic('${t.id}', ${!t.discussed})"></div>
       <div>
         <div class="topic-text ${t.discussed ? 'discussed' : ''}">${esc(t.text)}</div>
-        <div class="topic-by">${esc(t.added_by || '')}${t.meeting_id ? ' • voor meeting' : ''}</div>
+        <div class="topic-by">${esc(t.added_by || '')}</div>
       </div>
       <span class="delete-btn" onclick="deleteTopic('${t.id}')" style="margin-left:auto;">×</span>
     </div>
@@ -269,17 +267,17 @@ async function loadCheckins() {
   const container = document.getElementById('checkin-list');
 
   if (!data || data.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">Nog geen check-ins</p>';
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No check-ins yet</p>';
     return;
   }
 
   container.innerHTML = data.map(c => `
     <div class="checkin-entry">
-      <h3>${esc(c.members?.name || 'Onbekend')}</h3>
-      ${c.goals ? `<div class="field"><div class="field-label">🎯 Doelen</div>${esc(c.goals)}</div>` : ''}
-      ${c.progress ? `<div class="field"><div class="field-label">📈 Progressie</div>${esc(c.progress)}</div>` : ''}
-      ${c.challenges ? `<div class="field"><div class="field-label">⚡ Uitdagingen</div>${esc(c.challenges)}</div>` : ''}
-      ${c.support ? `<div class="field"><div class="field-label">🤝 Hulp nodig</div>${esc(c.support)}</div>` : ''}
+      <h3>${esc(c.members?.name || 'Unknown')}</h3>
+      ${c.goals ? `<div class="field"><div class="field-label">🎯 Goals</div>${esc(c.goals)}</div>` : ''}
+      ${c.progress ? `<div class="field"><div class="field-label">📈 Progress</div>${esc(c.progress)}</div>` : ''}
+      ${c.challenges ? `<div class="field"><div class="field-label">⚡ Challenges</div>${esc(c.challenges)}</div>` : ''}
+      ${c.support ? `<div class="field"><div class="field-label">🤝 Support needed</div>${esc(c.support)}</div>` : ''}
       ${c.screenshot_url ? `<img src="${c.screenshot_url}" alt="Check-in screenshot">` : ''}
     </div>
   `).join('');
@@ -301,7 +299,7 @@ function setupPasteZone() {
           pastedImageBase64 = ev.target.result;
           document.getElementById('checkin-preview').src = pastedImageBase64;
           document.getElementById('checkin-preview').classList.remove('hidden');
-          zone.textContent = '✅ Screenshot geplakt!';
+          zone.textContent = '✅ Screenshot pasted!';
           zone.classList.add('active');
         };
         reader.readAsDataURL(file);
@@ -314,7 +312,7 @@ function setupPasteZone() {
 
 async function submitCheckin() {
   const memberId = document.getElementById('checkin-member').value;
-  if (!memberId) { alert('Kies eerst een naam'); return; }
+  if (!memberId) { alert('Choose a name first'); return; }
 
   const goals = document.getElementById('checkin-goals').value.trim();
   const progress = document.getElementById('checkin-progress').value.trim();
@@ -323,7 +321,6 @@ async function submitCheckin() {
 
   let screenshotUrl = null;
   if (pastedImageBase64) {
-    // Upload to Supabase Storage
     const blob = await (await fetch(pastedImageBase64)).blob();
     const filename = `checkin_${currentMeetingId}_${memberId}_${Date.now()}.png`;
     const { data: upload } = await db.storage.from('checkins').upload(filename, blob, { contentType: 'image/png' });
@@ -347,7 +344,7 @@ async function submitCheckin() {
   document.getElementById('checkin-support').value = '';
   pastedImageBase64 = null;
   document.getElementById('checkin-preview').classList.add('hidden');
-  document.getElementById('paste-zone').textContent = '📋 Klik hier en plak (Ctrl+V) een screenshot van je check-in';
+  document.getElementById('paste-zone').textContent = '📋 Click here and paste (Ctrl+V) a screenshot of your check-in';
   document.getElementById('paste-zone').classList.remove('active');
 
   await loadCheckins();
@@ -355,7 +352,6 @@ async function submitCheckin() {
 
 // --- SUMMARY ---
 async function loadSummary() {
-  // Load previous meeting's summary
   const { data: meetings } = await db.from('meetings')
     .select('*').order('date', { ascending: false }).limit(2);
   const el = document.getElementById('prev-summary');
@@ -373,10 +369,9 @@ async function saveSummary() {
   const meetingId = el.dataset.meetingId;
   if (!meetingId) return;
   await db.from('meetings').update({ summary: el.innerHTML }).eq('id', meetingId);
-  // Brief visual feedback
   const btn = document.querySelector('.save-summary');
-  btn.textContent = '✓ Opgeslagen';
-  setTimeout(() => btn.textContent = 'Opslaan', 1500);
+  btn.textContent = '✓ Saved';
+  setTimeout(() => btn.textContent = 'Save', 1500);
 }
 
 // --- REALTIME ---
@@ -398,7 +393,7 @@ function esc(str) {
 
 function formatDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 // --- AUTO LOGIN CHECK ---
