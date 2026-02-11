@@ -57,6 +57,53 @@ async function loadMembers() {
     members.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
 }
 
+// --- MEMBER MANAGEMENT ---
+function toggleMemberManager() {
+  document.getElementById('member-manager').classList.toggle('hidden');
+  renderMemberList();
+}
+
+function renderMemberList() {
+  const container = document.getElementById('member-list');
+  container.innerHTML = members.map(m => `
+    <div class="member-manage-row">
+      <span>${esc(m.name)}</span>
+      <span class="delete-btn" onclick="removeMember('${m.id}')" title="Remove member">×</span>
+    </div>
+  `).join('');
+}
+
+async function addMember() {
+  const input = document.getElementById('new-member-name');
+  const name = input.value.trim();
+  if (!name) return;
+  const { data: newMember } = await db.from('members').insert({ name }).select().single();
+  input.value = '';
+  await loadMembers();
+  renderMemberList();
+  // Add attendance for all existing meetings
+  if (newMember) {
+    const { data: meetings } = await db.from('meetings').select('id');
+    if (meetings) {
+      for (const mtg of meetings) {
+        await db.from('attendance').insert({ meeting_id: mtg.id, member_id: newMember.id, present: false });
+      }
+    }
+  }
+  if (currentMeetingId) await loadAttendance();
+}
+
+async function removeMember(id) {
+  const member = members.find(m => m.id === id);
+  if (!confirm(`Remove ${member?.name || 'this member'}? This also removes their attendance and check-in records.`)) return;
+  await db.from('checkins').delete().eq('member_id', id);
+  await db.from('attendance').delete().eq('member_id', id);
+  await db.from('members').delete().eq('id', id);
+  await loadMembers();
+  renderMemberList();
+  if (currentMeetingId) await loadAttendance();
+}
+
 // --- MEETINGS ---
 async function loadMeetings() {
   const { data } = await db.from('meetings').select('*').order('date', { ascending: false });

@@ -64,6 +64,21 @@ header {
 .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
 .btn-danger:hover { border-color: var(--danger) !important; color: var(--danger) !important; }
 
+/* MEMBER MANAGER */
+.member-manager {
+  max-width: 1400px; margin: 0 auto; padding: 0 24px;
+}
+.member-manager-inner {
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 20px; margin-top: 12px;
+}
+.member-manager-inner h3 { font-size: 15px; margin-bottom: 12px; }
+.member-manage-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--card-border); font-size: 14px;
+}
+.member-manage-row:last-of-type { border-bottom: none; }
+
 /* GRID */
 .grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 16px;

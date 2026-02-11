@@ -31,9 +31,22 @@
       <span class="subtitle">AAA Accelerator</span>
     </div>
     <div class="header-right">
+      <button class="btn-small" onclick="toggleMemberManager()">👥 Members</button>
       <button class="btn-small btn-logout" onclick="logout()">Log out</button>
     </div>
   </header>
+
+  <!-- MEMBER MANAGER (toggle) -->
+  <div id="member-manager" class="member-manager hidden">
+    <div class="member-manager-inner">
+      <h3>👥 Manage Members</h3>
+      <div id="member-list"></div>
+      <div class="add-row" style="margin-top:12px;">
+        <input type="text" id="new-member-name" placeholder="New member name..." onkeydown="if(event.key==='Enter')addMember()">
+        <button onclick="addMember()">+ Add</button>
+      </div>
+    </div>
+  </div>
 
   <!-- GLOBAL SECTION: always visible -->
   <div class="grid global-section">
