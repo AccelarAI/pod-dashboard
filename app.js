@@ -134,9 +134,9 @@ async function switchMeeting() {
 }
 
 async function createNewMeeting() {
-  const title = prompt('Meeting title (optional):') || '';
   const dateStr = prompt('Date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
   if (!dateStr) return;
+  const title = '';
 
   // Generate recap from previous meeting
   const { data: prevMeetings } = await db.from('meetings').select('id').order('date', { ascending: false }).limit(1);
