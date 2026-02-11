@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pod Dashboard — AAA Accelerator</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -25,7 +26,6 @@
 <!-- MAIN DASHBOARD -->
 <div id="dashboard" class="dashboard hidden">
   
-  <!-- HEADER -->
   <header>
     <div class="header-left">
       <h1>🚀 Pod Dashboard</h1>
@@ -34,16 +34,20 @@
     <div class="header-right">
       <select id="meeting-selector" onchange="switchMeeting()"></select>
       <button class="btn-small" onclick="createNewMeeting()">+ New Meeting</button>
+      <button class="btn-small btn-danger" onclick="deleteMeeting()">🗑</button>
       <button class="btn-small btn-logout" onclick="logout()">Log out</button>
     </div>
   </header>
 
-  <!-- GRID LAYOUT -->
   <div class="grid">
     
-    <!-- AGENDA (shared, not per meeting) -->
+    <!-- AGENDA -->
     <section class="card agenda-card">
-      <h2>📋 Agenda</h2>
+      <div class="card-header-row">
+        <h2>📋 Agenda</h2>
+        <button class="btn-tiny" onclick="toggleDefaultAgenda()" id="agenda-mode-btn" title="Switch between meeting agenda and default template">⚙️ Template</button>
+      </div>
+      <div id="agenda-mode-label" class="mode-label">Meeting agenda</div>
       <div id="agenda-items"></div>
       <div class="add-row">
         <input type="text" id="new-agenda-text" placeholder="New agenda item...">
@@ -89,21 +93,22 @@
           <div class="paste-zone" id="paste-zone">
             📋 Click here and paste (Ctrl+V) a screenshot of your check-in
           </div>
+          <div id="ocr-status" class="hidden ocr-status">🔍 Reading screenshot...</div>
           <img id="checkin-preview" class="hidden" style="max-width:100%;border-radius:8px;margin-top:8px;">
           <button onclick="submitCheckin()">Save check-in</button>
         </div>
       </details>
     </section>
 
-    <!-- PREVIOUS MEETING SUMMARY -->
+    <!-- PREVIOUS MEETING RECAP -->
     <section class="card summary-card">
-      <h2>📄 Previous Meeting Summary</h2>
-      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Click to add summary..."></div>
+      <h2>📄 Previous Meeting Recap</h2>
+      <div id="prev-recap"></div>
+      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Click to add/edit summary..."></div>
       <button class="btn-small save-summary" onclick="saveSummary()">Save</button>
     </section>
 
   </div>
-
 </div>
 
 <script src="app.js"></script>

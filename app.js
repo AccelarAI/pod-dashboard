@@ -10,6 +10,7 @@ let db;
 let currentMeetingId = null;
 let members = [];
 let topicFilter = 'open';
+let editingDefaultAgenda = false;
 
 // --- AUTH ---
 function attemptLogin() {
@@ -42,8 +43,6 @@ async function init() {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   await loadMembers();
   await loadMeetings();
-  await loadAgenda();
-  await loadTopics();
   setupPasteZone();
   setupRealtimeSubscriptions();
 }
@@ -67,50 +66,158 @@ async function loadMeetings() {
   const sel = document.getElementById('meeting-selector');
   if (!data || data.length === 0) {
     sel.innerHTML = '<option>No meetings yet</option>';
+    currentMeetingId = null;
     return;
   }
   sel.innerHTML = data.map(m =>
     `<option value="${m.id}">${formatDate(m.date)}${m.title ? ' — ' + m.title : ''}</option>`
   ).join('');
   currentMeetingId = data[0].id;
-  await loadMeetingData();
+  await loadAllForMeeting();
 }
 
 async function switchMeeting() {
   currentMeetingId = document.getElementById('meeting-selector').value;
-  await loadMeetingData();
+  await loadAllForMeeting();
 }
 
 async function createNewMeeting() {
   const title = prompt('Meeting title (optional):') || '';
   const dateStr = prompt('Date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
   if (!dateStr) return;
-  const { data } = await db.from('meetings').insert({ date: dateStr, title, summary: '' }).select().single();
+
+  // Get previous meeting info for auto-recap
+  const { data: prevMeetings } = await db.from('meetings').select('*').order('date', { ascending: false }).limit(1);
+  let autoRecap = '';
+
+  if (prevMeetings && prevMeetings.length > 0) {
+    const prev = prevMeetings[0];
+    autoRecap = await generateRecap(prev.id);
+  }
+
+  const { data } = await db.from('meetings').insert({
+    date: dateStr, title, summary: autoRecap
+  }).select().single();
+
   if (data) {
-    // Create attendance records for all members (once)
+    // Create attendance for all members
     const rows = members.map(m => ({ meeting_id: data.id, member_id: m.id, present: false }));
-    if (rows.length) await db.from('attendance').insert(rows);
+    if (rows.length) await db.from('attendance').upsert(rows, { onConflict: 'meeting_id,member_id' });
+
+    // Copy default agenda template to this meeting
+    const { data: defaults } = await db.from('agenda_defaults').select('*').order('position');
+    if (defaults && defaults.length) {
+      const agendaRows = defaults.map((d, i) => ({
+        meeting_id: data.id, text: d.text, duration_min: d.duration_min, position: i
+      }));
+      await db.from('agenda_items').insert(agendaRows);
+    }
+
     await loadMeetings();
   }
 }
 
-// Load only meeting-specific data (attendance, checkins, summary)
-async function loadMeetingData() {
+async function deleteMeeting() {
   if (!currentMeetingId) return;
+  const sel = document.getElementById('meeting-selector');
+  const name = sel.options[sel.selectedIndex]?.text || '';
+  if (!confirm(`Delete meeting "${name}"? This removes all its data.`)) return;
+  await db.from('meetings').delete().eq('id', currentMeetingId);
+  await loadMeetings();
+}
+
+async function generateRecap(meetingId) {
+  // Gather attendance
+  const { data: att } = await db.from('attendance')
+    .select('present, members(name)').eq('meeting_id', meetingId);
+  const presentNames = (att || []).filter(a => a.present).map(a => a.members?.name).filter(Boolean);
+  const absentNames = (att || []).filter(a => !a.present).map(a => a.members?.name).filter(Boolean);
+
+  // Gather discussed topics
+  const { data: topics } = await db.from('topics')
+    .select('text').eq('discussed', true).eq('meeting_id', meetingId);
+
+  // Gather checkins
+  const { data: checkins } = await db.from('checkins')
+    .select('members(name), goals, challenges').eq('meeting_id', meetingId);
+
+  let recap = '';
+  if (presentNames.length) recap += `**Present:** ${presentNames.join(', ')}\n`;
+  if (absentNames.length) recap += `**Absent:** ${absentNames.join(', ')}\n`;
+  if (topics && topics.length) {
+    recap += `\n**Topics discussed:**\n`;
+    topics.forEach(t => recap += `• ${t.text}\n`);
+  }
+  if (checkins && checkins.length) {
+    recap += `\n**Check-in highlights:**\n`;
+    checkins.forEach(c => {
+      const name = c.members?.name || '?';
+      if (c.goals) recap += `• ${name} — Goals: ${c.goals.substring(0, 100)}\n`;
+      if (c.challenges) recap += `• ${name} — Challenge: ${c.challenges.substring(0, 100)}\n`;
+    });
+  }
+  return recap;
+}
+
+async function loadAllForMeeting() {
+  if (!currentMeetingId) return;
+  editingDefaultAgenda = false;
+  updateAgendaModeUI();
   await Promise.all([
+    loadAgenda(),
     loadAttendance(),
+    loadTopics(),
     loadCheckins(),
-    loadSummary()
+    loadRecap()
   ]);
 }
 
-// --- AGENDA (shared across all meetings) ---
-async function loadAgenda() {
-  const { data } = await db.from('agenda_items')
-    .select('*').order('position');
+// --- AGENDA (per meeting, with default template) ---
+function toggleDefaultAgenda() {
+  editingDefaultAgenda = !editingDefaultAgenda;
+  updateAgendaModeUI();
+  if (editingDefaultAgenda) loadDefaultAgenda();
+  else loadAgenda();
+}
+
+function updateAgendaModeUI() {
+  const label = document.getElementById('agenda-mode-label');
+  const btn = document.getElementById('agenda-mode-btn');
+  if (editingDefaultAgenda) {
+    label.textContent = '⚙️ Editing default template (used for new meetings)';
+    label.style.color = 'var(--warning)';
+    btn.textContent = '← Back';
+  } else {
+    label.textContent = 'Meeting agenda';
+    label.style.color = 'var(--text-muted)';
+    btn.textContent = '⚙️ Template';
+  }
+}
+
+async function loadDefaultAgenda() {
+  const { data } = await db.from('agenda_defaults').select('*').order('position');
   const container = document.getElementById('agenda-items');
   if (!data || data.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No agenda items yet</p>';
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No default items yet. Add items here — they\'ll be used for every new meeting.</p>';
+    return;
+  }
+  container.innerHTML = data.map(item => `
+    <div class="agenda-item" draggable="true" data-id="${item.id}">
+      <span class="drag-handle">⠿</span>
+      <span class="time-badge">${item.duration_min} min</span>
+      <span class="text">${esc(item.text)}</span>
+      <span class="delete-btn" onclick="deleteAgendaItem('${item.id}')">×</span>
+    </div>
+  `).join('');
+}
+
+async function loadAgenda() {
+  if (editingDefaultAgenda) return loadDefaultAgenda();
+  const { data } = await db.from('agenda_items')
+    .select('*').eq('meeting_id', currentMeetingId).order('position');
+  const container = document.getElementById('agenda-items');
+  if (!data || data.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No agenda items. Add some or set up a default template.</p>';
     return;
   }
   container.innerHTML = data.map(item => `
@@ -128,17 +235,27 @@ async function addAgendaItem() {
   const text = document.getElementById('new-agenda-text').value.trim();
   const dur = parseInt(document.getElementById('new-agenda-time').value) || 5;
   if (!text) return;
-  const { data: existing } = await db.from('agenda_items')
-    .select('position').order('position', { ascending: false }).limit(1);
+
+  const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
+  const filter = editingDefaultAgenda ? {} : { meeting_id: currentMeetingId };
+
+  let query = db.from(table).select('position').order('position', { ascending: false }).limit(1);
+  if (!editingDefaultAgenda) query = query.eq('meeting_id', currentMeetingId);
+  const { data: existing } = await query;
+
   const pos = existing && existing.length ? existing[0].position + 1 : 0;
-  await db.from('agenda_items').insert({ text, duration_min: dur, position: pos });
+  const row = { text, duration_min: dur, position: pos };
+  if (!editingDefaultAgenda) row.meeting_id = currentMeetingId;
+
+  await db.from(table).insert(row);
   document.getElementById('new-agenda-text').value = '';
-  await loadAgenda();
+  editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
 }
 
 async function deleteAgendaItem(id) {
-  await db.from('agenda_items').delete().eq('id', id);
-  await loadAgenda();
+  const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
+  await db.from(table).delete().eq('id', id);
+  editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
 }
 
 function setupAgendaDragDrop() {
@@ -155,17 +272,19 @@ function setupAgendaDragDrop() {
       const draggedId = e.dataTransfer.getData('text/plain');
       const targetId = item.dataset.id;
       if (draggedId === targetId) return;
-      const { data: all } = await db.from('agenda_items')
-        .select('id,position').order('position');
+      const table = editingDefaultAgenda ? 'agenda_defaults' : 'agenda_items';
+      let query = db.from(table).select('id,position').order('position');
+      if (!editingDefaultAgenda) query = query.eq('meeting_id', currentMeetingId);
+      const { data: all } = await query;
       const ids = all.map(a => a.id);
       const fromIdx = ids.indexOf(draggedId);
       const toIdx = ids.indexOf(targetId);
       ids.splice(fromIdx, 1);
       ids.splice(toIdx, 0, draggedId);
       for (let i = 0; i < ids.length; i++) {
-        await db.from('agenda_items').update({ position: i }).eq('id', ids[i]);
+        await db.from(table).update({ position: i }).eq('id', ids[i]);
       }
-      await loadAgenda();
+      editingDefaultAgenda ? loadDefaultAgenda() : loadAgenda();
     });
   });
 }
@@ -181,7 +300,6 @@ async function loadAttendance() {
     return;
   }
 
-  // Deduplicate: keep only one record per member (in case of duplicates)
   const seen = new Set();
   const unique = data.filter(a => {
     if (seen.has(a.member_id)) return false;
@@ -289,18 +407,38 @@ function setupPasteZone() {
   const zone = document.getElementById('paste-zone');
   zone.addEventListener('click', () => zone.focus());
   zone.setAttribute('tabindex', '0');
-  zone.addEventListener('paste', e => {
+  zone.addEventListener('paste', async e => {
     const items = e.clipboardData.items;
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const file = item.getAsFile();
         const reader = new FileReader();
-        reader.onload = ev => {
+        reader.onload = async ev => {
           pastedImageBase64 = ev.target.result;
           document.getElementById('checkin-preview').src = pastedImageBase64;
           document.getElementById('checkin-preview').classList.remove('hidden');
           zone.textContent = '✅ Screenshot pasted!';
           zone.classList.add('active');
+
+          // OCR: extract text from screenshot
+          const statusEl = document.getElementById('ocr-status');
+          statusEl.classList.remove('hidden');
+          statusEl.textContent = '🔍 Reading screenshot text...';
+
+          try {
+            const { data: { text } } = await Tesseract.recognize(pastedImageBase64, 'eng');
+            statusEl.classList.add('hidden');
+
+            // Try to parse the check-in fields from OCR text
+            const parsed = parseCheckinText(text);
+            if (parsed.goals) document.getElementById('checkin-goals').value = parsed.goals;
+            if (parsed.progress) document.getElementById('checkin-progress').value = parsed.progress;
+            if (parsed.challenges) document.getElementById('checkin-challenges').value = parsed.challenges;
+            if (parsed.support) document.getElementById('checkin-support').value = parsed.support;
+          } catch (err) {
+            statusEl.textContent = '⚠️ Could not read screenshot text';
+            setTimeout(() => statusEl.classList.add('hidden'), 3000);
+          }
         };
         reader.readAsDataURL(file);
         e.preventDefault();
@@ -308,6 +446,49 @@ function setupPasteZone() {
       }
     }
   });
+}
+
+function parseCheckinText(text) {
+  // Try to extract the 4 check-in fields from OCR text
+  const result = { goals: '', progress: '', challenges: '', support: '' };
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Look for section headers from the check-in tool
+  let currentField = null;
+  const fieldMap = {
+    'goals': ['goal', 'objectives', 'priorities', 'main goals'],
+    'progress': ['progress', 'achievements', 'completed', 'made since'],
+    'challenges': ['challenge', 'obstacle', 'difficult', 'facing'],
+    'support': ['support', 'help', 'need from', 'pod']
+  };
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    // Check if this line is a header
+    let matched = false;
+    for (const [field, keywords] of Object.entries(fieldMap)) {
+      if (keywords.some(k => lower.includes(k)) && lower.length < 80) {
+        currentField = field;
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched && currentField) {
+      // Skip placeholder text
+      if (lower.includes('describe your') || lower.includes('share your') || lower.includes('let your pod')) continue;
+      result[currentField] += (result[currentField] ? '\n' : '') + line;
+    }
+  }
+
+  // If no structured parsing worked, just put everything in goals
+  const hasContent = Object.values(result).some(v => v.trim());
+  if (!hasContent && lines.length > 0) {
+    result.goals = lines.join('\n');
+  }
+
+  return result;
 }
 
 async function submitCheckin() {
@@ -350,18 +531,36 @@ async function submitCheckin() {
   await loadCheckins();
 }
 
-// --- SUMMARY ---
-async function loadSummary() {
+// --- RECAP ---
+async function loadRecap() {
   const { data: meetings } = await db.from('meetings')
     .select('*').order('date', { ascending: false }).limit(2);
-  const el = document.getElementById('prev-summary');
+  const recapEl = document.getElementById('prev-recap');
+  const summaryEl = document.getElementById('prev-summary');
+
   if (meetings && meetings.length > 1) {
-    el.innerHTML = meetings[1].summary || '';
-    el.dataset.meetingId = meetings[1].id;
+    const prev = meetings[1];
+    // Show auto-generated recap
+    const recap = meetings[0].summary || '';
+    recapEl.innerHTML = recap ? formatRecap(recap) : '<p style="color:var(--text-muted);font-size:13px;">No recap available</p>';
+    // Summary is editable for current meeting
+    summaryEl.innerHTML = prev.summary || '';
+    summaryEl.dataset.meetingId = prev.id;
   } else if (meetings && meetings.length === 1) {
-    el.innerHTML = meetings[0].summary || '';
-    el.dataset.meetingId = meetings[0].id;
+    recapEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">First meeting — no previous recap</p>';
+    summaryEl.innerHTML = meetings[0].summary || '';
+    summaryEl.dataset.meetingId = meetings[0].id;
+  } else {
+    recapEl.innerHTML = '';
   }
+}
+
+function formatRecap(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^• (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+    .replace(/\n/g, '<br>');
 }
 
 async function saveSummary() {
@@ -377,7 +576,8 @@ async function saveSummary() {
 // --- REALTIME ---
 function setupRealtimeSubscriptions() {
   db.channel('all-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_items' }, () => loadAgenda())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_items' }, () => { if (!editingDefaultAgenda) loadAgenda(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_defaults' }, () => { if (editingDefaultAgenda) loadDefaultAgenda(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => loadAttendance())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'topics' }, () => loadTopics())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => loadCheckins())
@@ -396,7 +596,7 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// --- AUTO LOGIN CHECK ---
+// --- AUTO LOGIN ---
 if (sessionStorage.getItem('pod_auth') === '1') {
   showDashboard();
 }
