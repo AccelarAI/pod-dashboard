@@ -7,7 +7,7 @@
 const SUPABASE_URL = 'https://jngaimwmdntcydqefryt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_IIWDOFGb41BZC9J8XS-BAA_YiO1FQMv';
 
-let supabase;
+let db;
 let currentMeetingId = null;
 let members = [];
 let topicFilter = 'open';
@@ -43,7 +43,7 @@ function showDashboard() {
 
 // --- INIT ---
 async function init() {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   await loadMembers();
   await loadMeetings();
   setupPasteZone();
@@ -52,7 +52,7 @@ async function init() {
 
 // --- MEMBERS ---
 async function loadMembers() {
-  const { data } = await supabase.from('members').select('*').order('name');
+  const { data } = await db.from('members').select('*').order('name');
   members = data || [];
   populateCheckinMemberSelect();
 }
@@ -65,7 +65,7 @@ function populateCheckinMemberSelect() {
 
 // --- MEETINGS ---
 async function loadMeetings() {
-  const { data } = await supabase.from('meetings').select('*').order('date', { ascending: false });
+  const { data } = await db.from('meetings').select('*').order('date', { ascending: false });
   const sel = document.getElementById('meeting-selector');
   if (!data || data.length === 0) {
     sel.innerHTML = '<option>Geen meetings</option>';
@@ -87,11 +87,11 @@ async function createNewMeeting() {
   const title = prompt('Meeting titel (optioneel):') || '';
   const dateStr = prompt('Datum (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
   if (!dateStr) return;
-  const { data } = await supabase.from('meetings').insert({ date: dateStr, title, summary: '' }).select().single();
+  const { data } = await db.from('meetings').insert({ date: dateStr, title, summary: '' }).select().single();
   if (data) {
     // Auto-create attendance records for all members
     const attendanceRows = members.map(m => ({ meeting_id: data.id, member_id: m.id, present: false }));
-    if (attendanceRows.length) await supabase.from('attendance').insert(attendanceRows);
+    if (attendanceRows.length) await db.from('attendance').insert(attendanceRows);
     await loadMeetings();
   }
 }
@@ -109,7 +109,7 @@ async function loadAllForMeeting() {
 
 // --- AGENDA ---
 async function loadAgenda() {
-  const { data } = await supabase.from('agenda_items')
+  const { data } = await db.from('agenda_items')
     .select('*').eq('meeting_id', currentMeetingId).order('position');
   const container = document.getElementById('agenda-items');
   if (!data || data.length === 0) {
@@ -131,16 +131,16 @@ async function addAgendaItem() {
   const text = document.getElementById('new-agenda-text').value.trim();
   const dur = parseInt(document.getElementById('new-agenda-time').value) || 5;
   if (!text) return;
-  const { data: existing } = await supabase.from('agenda_items')
+  const { data: existing } = await db.from('agenda_items')
     .select('position').eq('meeting_id', currentMeetingId).order('position', { ascending: false }).limit(1);
   const pos = existing && existing.length ? existing[0].position + 1 : 0;
-  await supabase.from('agenda_items').insert({ meeting_id: currentMeetingId, text, duration_min: dur, position: pos });
+  await db.from('agenda_items').insert({ meeting_id: currentMeetingId, text, duration_min: dur, position: pos });
   document.getElementById('new-agenda-text').value = '';
   await loadAgenda();
 }
 
 async function deleteAgendaItem(id) {
-  await supabase.from('agenda_items').delete().eq('id', id);
+  await db.from('agenda_items').delete().eq('id', id);
   await loadAgenda();
 }
 
@@ -159,7 +159,7 @@ function setupAgendaDragDrop() {
       const targetId = item.dataset.id;
       if (draggedId === targetId) return;
       // Swap positions
-      const { data: all } = await supabase.from('agenda_items')
+      const { data: all } = await db.from('agenda_items')
         .select('id,position').eq('meeting_id', currentMeetingId).order('position');
       const ids = all.map(a => a.id);
       const fromIdx = ids.indexOf(draggedId);
@@ -167,7 +167,7 @@ function setupAgendaDragDrop() {
       ids.splice(fromIdx, 1);
       ids.splice(toIdx, 0, draggedId);
       for (let i = 0; i < ids.length; i++) {
-        await supabase.from('agenda_items').update({ position: i }).eq('id', ids[i]);
+        await db.from('agenda_items').update({ position: i }).eq('id', ids[i]);
       }
       await loadAgenda();
     });
@@ -176,7 +176,7 @@ function setupAgendaDragDrop() {
 
 // --- ATTENDANCE ---
 async function loadAttendance() {
-  const { data } = await supabase.from('attendance')
+  const { data } = await db.from('attendance')
     .select('*, members(name)').eq('meeting_id', currentMeetingId);
   const container = document.getElementById('attendance-list');
 
@@ -184,7 +184,7 @@ async function loadAttendance() {
     // If no attendance records, create them
     if (members.length && currentMeetingId) {
       const rows = members.map(m => ({ meeting_id: currentMeetingId, member_id: m.id, present: false }));
-      await supabase.from('attendance').insert(rows);
+      await db.from('attendance').insert(rows);
       return loadAttendance();
     }
     container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">Geen leden</p>';
@@ -205,13 +205,13 @@ async function loadAttendance() {
 }
 
 async function toggleAttendance(id, val) {
-  await supabase.from('attendance').update({ present: val }).eq('id', id);
+  await db.from('attendance').update({ present: val }).eq('id', id);
   await loadAttendance();
 }
 
 // --- TOPICS ---
 async function loadTopics() {
-  let query = supabase.from('topics').select('*').order('created_at', { ascending: false });
+  let query = db.from('topics').select('*').order('created_at', { ascending: false });
   if (topicFilter === 'open') query = query.eq('discussed', false);
   else query = query.eq('discussed', true);
 
@@ -246,25 +246,25 @@ async function addTopic() {
   const text = document.getElementById('new-topic-text').value.trim();
   const by = document.getElementById('new-topic-by').value.trim();
   if (!text) return;
-  await supabase.from('topics').insert({ text, added_by: by, discussed: false, meeting_id: null });
+  await db.from('topics').insert({ text, added_by: by, discussed: false, meeting_id: null });
   document.getElementById('new-topic-text').value = '';
   document.getElementById('new-topic-by').value = '';
   await loadTopics();
 }
 
 async function toggleTopic(id, val) {
-  await supabase.from('topics').update({ discussed: val, meeting_id: val ? currentMeetingId : null }).eq('id', id);
+  await db.from('topics').update({ discussed: val, meeting_id: val ? currentMeetingId : null }).eq('id', id);
   await loadTopics();
 }
 
 async function deleteTopic(id) {
-  await supabase.from('topics').delete().eq('id', id);
+  await db.from('topics').delete().eq('id', id);
   await loadTopics();
 }
 
 // --- CHECK-INS ---
 async function loadCheckins() {
-  const { data } = await supabase.from('checkins')
+  const { data } = await db.from('checkins')
     .select('*, members(name)').eq('meeting_id', currentMeetingId).order('created_at');
   const container = document.getElementById('checkin-list');
 
@@ -326,14 +326,14 @@ async function submitCheckin() {
     // Upload to Supabase Storage
     const blob = await (await fetch(pastedImageBase64)).blob();
     const filename = `checkin_${currentMeetingId}_${memberId}_${Date.now()}.png`;
-    const { data: upload } = await supabase.storage.from('checkins').upload(filename, blob, { contentType: 'image/png' });
+    const { data: upload } = await db.storage.from('checkins').upload(filename, blob, { contentType: 'image/png' });
     if (upload) {
-      const { data: urlData } = supabase.storage.from('checkins').getPublicUrl(filename);
+      const { data: urlData } = db.storage.from('checkins').getPublicUrl(filename);
       screenshotUrl = urlData.publicUrl;
     }
   }
 
-  await supabase.from('checkins').insert({
+  await db.from('checkins').insert({
     meeting_id: currentMeetingId,
     member_id: memberId,
     goals, progress, challenges, support,
@@ -356,7 +356,7 @@ async function submitCheckin() {
 // --- SUMMARY ---
 async function loadSummary() {
   // Load previous meeting's summary
-  const { data: meetings } = await supabase.from('meetings')
+  const { data: meetings } = await db.from('meetings')
     .select('*').order('date', { ascending: false }).limit(2);
   const el = document.getElementById('prev-summary');
   if (meetings && meetings.length > 1) {
@@ -372,7 +372,7 @@ async function saveSummary() {
   const el = document.getElementById('prev-summary');
   const meetingId = el.dataset.meetingId;
   if (!meetingId) return;
-  await supabase.from('meetings').update({ summary: el.innerHTML }).eq('id', meetingId);
+  await db.from('meetings').update({ summary: el.innerHTML }).eq('id', meetingId);
   // Brief visual feedback
   const btn = document.querySelector('.save-summary');
   btn.textContent = '✓ Opgeslagen';
@@ -381,7 +381,7 @@ async function saveSummary() {
 
 // --- REALTIME ---
 function setupRealtimeSubscriptions() {
-  supabase.channel('all-changes')
+  db.channel('all-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_items' }, () => loadAgenda())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => loadAttendance())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'topics' }, () => loadTopics())
