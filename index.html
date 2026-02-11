@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pod Dashboard — AAA Accelerator</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- PASSWORD GATE -->
+<div id="login-screen" class="login-screen">
+  <div class="login-box">
+    <h1>🚀 Pod Dashboard</h1>
+    <p>AAA Accelerator</p>
+    <input type="password" id="password-input" placeholder="Wachtwoord" autofocus>
+    <button onclick="attemptLogin()">Inloggen</button>
+    <p id="login-error" class="error hidden">Verkeerd wachtwoord</p>
+  </div>
+</div>
+
+<!-- MAIN DASHBOARD -->
+<div id="dashboard" class="dashboard hidden">
+  
+  <!-- HEADER -->
+  <header>
+    <div class="header-left">
+      <h1>🚀 Pod Dashboard</h1>
+      <span class="subtitle">AAA Accelerator</span>
+    </div>
+    <div class="header-right">
+      <select id="meeting-selector" onchange="switchMeeting()"></select>
+      <button class="btn-small" onclick="createNewMeeting()">+ Nieuwe Meeting</button>
+      <button class="btn-small btn-logout" onclick="logout()">Uitloggen</button>
+    </div>
+  </header>
+
+  <!-- GRID LAYOUT -->
+  <div class="grid">
+    
+    <!-- AGENDA -->
+    <section class="card agenda-card">
+      <h2>📋 Agenda</h2>
+      <div id="agenda-items"></div>
+      <div class="add-row">
+        <input type="text" id="new-agenda-text" placeholder="Nieuw agendapunt...">
+        <input type="number" id="new-agenda-time" placeholder="min" min="1" max="60" value="5" style="width:60px">
+        <button onclick="addAgendaItem()">+</button>
+      </div>
+    </section>
+
+    <!-- ATTENDANCE -->
+    <section class="card attendance-card">
+      <h2>👥 Aanwezigheid</h2>
+      <div id="attendance-list"></div>
+    </section>
+
+    <!-- TOPICS -->
+    <section class="card topics-card">
+      <h2>💡 Onderwerpen</h2>
+      <div class="topic-filters">
+        <button class="filter-btn active" data-filter="open" onclick="filterTopics('open')">Open</button>
+        <button class="filter-btn" data-filter="discussed" onclick="filterTopics('discussed')">Besproken</button>
+      </div>
+      <div id="topics-list"></div>
+      <div class="add-row">
+        <input type="text" id="new-topic-text" placeholder="Nieuw onderwerp...">
+        <input type="text" id="new-topic-by" placeholder="Naam" style="width:80px">
+        <button onclick="addTopic()">+</button>
+      </div>
+    </section>
+
+    <!-- CHECK-INS -->
+    <section class="card checkin-card">
+      <h2>📝 Check-ins</h2>
+      <div id="checkin-list"></div>
+      <details class="checkin-form-toggle">
+        <summary>+ Check-in toevoegen</summary>
+        <div class="checkin-form">
+          <select id="checkin-member"></select>
+          <textarea id="checkin-goals" placeholder="Doelen deze week..." rows="2"></textarea>
+          <textarea id="checkin-progress" placeholder="Progressie sinds vorige week..." rows="2"></textarea>
+          <textarea id="checkin-challenges" placeholder="Uitdagingen..." rows="2"></textarea>
+          <textarea id="checkin-support" placeholder="Hulp nodig van pod..." rows="2"></textarea>
+          <div class="checkin-or">— of plak een screenshot —</div>
+          <div class="paste-zone" id="paste-zone">
+            📋 Klik hier en plak (Ctrl+V) een screenshot van je check-in
+          </div>
+          <img id="checkin-preview" class="hidden" style="max-width:100%;border-radius:8px;margin-top:8px;">
+          <button onclick="submitCheckin()">Check-in opslaan</button>
+        </div>
+      </details>
+    </section>
+
+    <!-- PREVIOUS MEETING SUMMARY -->
+    <section class="card summary-card">
+      <h2>📄 Samenvatting vorige meeting</h2>
+      <div id="prev-summary" class="editable-area" contenteditable="true" data-placeholder="Klik om samenvatting toe te voegen..."></div>
+      <button class="btn-small save-summary" onclick="saveSummary()">Opslaan</button>
+    </section>
+
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
