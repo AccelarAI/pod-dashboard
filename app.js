@@ -138,15 +138,8 @@ async function createNewMeeting() {
   if (!dateStr) return;
   const title = '';
 
-  // Generate recap from previous meeting
-  const { data: prevMeetings } = await db.from('meetings').select('id').order('date', { ascending: false }).limit(1);
-  let autoRecap = '';
-  if (prevMeetings && prevMeetings.length > 0) {
-    autoRecap = await generateRecap(prevMeetings[0].id);
-  }
-
   const { data } = await db.from('meetings').insert({
-    date: dateStr, title, summary: autoRecap
+    date: dateStr, title, summary: ''
   }).select().single();
 
   if (data) {
@@ -541,15 +534,16 @@ async function loadRecap() {
 
   const currentIdx = allMeetings.findIndex(m => m.id === currentMeetingId);
   const current = allMeetings[currentIdx];
+  const prev = currentIdx >= 0 && currentIdx < allMeetings.length - 1 ? allMeetings[currentIdx + 1] : null;
 
-  // Show auto-recap stored in this meeting's summary
-  if (current && current.summary) {
-    recapEl.innerHTML = '<strong>Previous meeting recap:</strong><br>' + formatRecap(current.summary);
+  // Show PREVIOUS meeting's summary as read-only recap
+  if (prev && prev.summary) {
+    recapEl.innerHTML = '<strong>Previous meeting recap:</strong><br>' + formatRecap(prev.summary);
   } else {
-    recapEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No recap yet</p>';
+    recapEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No previous recap</p>';
   }
 
-  // Editable summary for THIS meeting
+  // Editable summary for THIS meeting (empty until user fills it in)
   summaryEl.innerHTML = current?.summary || '';
   summaryEl.dataset.meetingId = currentMeetingId;
 }
